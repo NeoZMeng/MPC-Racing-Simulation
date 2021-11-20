@@ -2,17 +2,25 @@ import pyomo.environ as pyo
 from pyomo.opt import TerminationCondition
 from pyomo.core.base.PyomoModel import Model
 import numpy as np
+from math import sqrt, sin, cos, atan
 
-# x contains: position_x, position_y, heading, speed
+from Car import Car
+from Track import Track
+
+# x contains: position_x, position_y, heading, speed, turning_rate
 # u contains: acceleration, steering_angle
+
 
 nx = 4
 nu = 2
+
 solver = pyo.SolverFactory('ipopt')
 
 
 def solve(N: int,
           dt: float,
+          car: Car,
+          track: Track,
           distanceFunc: callable,
           nextStateFunc: callable,
           onTrackFunc: callable,
@@ -22,6 +30,8 @@ def solve(N: int,
     model = pyo.ConcreteModel()
 
     model.N = N
+    model.dt = dt
+    model.car = car
 
     model.xidx = pyo.Set(initialize=range(nx))
     model.uidx = pyo.Set(initialize=range(nu))
@@ -33,12 +43,12 @@ def solve(N: int,
 
     model.obj = pyo.Objective(rule=distanceFunc, sense=pyo.maximize)
 
-    model.constraint0 = pyo.Constraint(model.tmidx, model.xidx, rule=nextStateFunc)
+    model.constraint0 = pyo.Constraint(model.tmidx, rule=nextStateFunc)
     model.constraint1 = pyo.Constraint(model.tidx, rule=onTrackFunc)
     model.constraint2 = pyo.Constraint(model.tidx, rule=tractionFunc)
     if repeatableFunc is not None:  # additional function
         model.constraint3 = pyo.Constraint(model.tidx, rule=repeatableFunc)
-    model.constraint4 = pyo.Constraint(model.tmidx, model.uidx, rule= inputBoundsFunc)
+    model.constraint4 = pyo.Constraint(model.tmidx, model.uidx, rule=inputBoundsFunc)
     results = solver.solve(model)
 
     feas = results.solver.termination_condition == TerminationCondition.optimal
@@ -52,24 +62,45 @@ def solve(N: int,
 # calculate distance traveled
 def distance(model: Model) -> float:
     # TODO: implementation
-    pass
+    #  simple solution: calculate distance traveled
+    #  quality solution: calculate track length traveled
+
+    # simple solution
+    distanceTraveled = 0
+    for t in range(model.N):
+        distanceTraveled += sqrt((model.x[t + 1, 0] - model.x[t, 0]) ^ 2 + (model.x[t + 1, 1] - model.x[t, 1]) ^ 2)
+    return distanceTraveled
 
 
 # constraint check: x(k+1) = g(x(k), u(k))
-def nextState(model: Model, t: int, i: int) -> bool:
+def nextState(model: Model, t: int) -> bool:
     # TODO: implementation
-    pass
+    #   simple model
+    #   quality model
+
+    # simple model
+    results = [model.x[t + 1, 0] == model.x[t, 0] + model.x[t, 3] * cos(model.x[t, 2]) * model.dt,
+               model.x[t + 1, 1] == model.x[t, 1] + model.x[t, 3] * sin(model.x[t, 2]) * model.dt,
+               model.x[t + 1, 2] == model.x[t, 4] * model.dt,
+               model.x[t + 1, 3] == model.u[t, 0] * model.dt,
+               model.x[t + 1, 4] == atan(sin(model.u[t, 1]) * model.x[t, 3] / model.car.wb)]
+    return all(results)
 
 
 # check if car is on track
 def onTrack(model: Model, t: int) -> bool:
     # TODO: implementation
+    #   simple solution: check if the center of vehicle is on the track
+    #   quality solution: check if the whole car is within the track
     pass
 
 
 # check if the car still has traction
 def traction(model: Model, t: int) -> bool:
     # TODO: implementation
+    #   simple solution: 1G all around(assume car is AWD)
+    #   quality solutions: check wheel spin(assume car is RWD)
+    #   additional feature?: add understeer and oversteer
     pass
 
 
@@ -84,11 +115,15 @@ def sameStarting(model: Model, t: int) -> bool:
 # check if input is within bounds
 def inputBounds(model: Model, t: int, i: int) -> bool:
     # TODO: implementation
+    #   simple solution: fixed power(assume CVT)
+    #   quality solution: realistic powertrain
     pass
+
 
 if __name__ == '__main__':
     N = 100
     dt = 0.1
-
-    results = solve(N, dt, distance, nextState, onTrack, traction, None, inputBounds)
+    car = Car()
+    track = Track()
+    results = solve(N, dt, car, distance, nextState, onTrack, traction, None, inputBounds)
     print(results[0])
