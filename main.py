@@ -12,161 +12,128 @@ from Track import Track
 # u contains: acceleration, steering_angle, delta_t
 
 
-nx = 5
+nx = 3
 nu = 2
+vMin = 20
+vMax = 300
+thetaMax = 0.5
 # dtSet = [0.1, 1]
 
 solver = pyo.SolverFactory('ipopt')
 
-solver.options['halt_on_ampl_error'] = 'no'
+solver.options['halt_on_ampl_error'] = 'yes'
 solver.options['print_level'] = 5
 
-#
-# # calculate distance traveled
-# def distance(model: Model):
-#     # TODO: implementation
-#     #  simple solution: calculate distance traveled
-#     #  quality solution: calculate track length traveled
-#
-#     # simple solution
-#     distanceTraveled = 0
-#     for t in range(model.N):
-#         distanceTraveled += model.x[t, 3] * dt
-#     return distanceTraveled
-#
-#
-# # def lapTime(model: Model):
-# #     timeUsed = 0.
-# #     for t in model.tmidx:
-# #         timeUsed += model.u[t, 2]
-# #     return timeUsed
-#
-#
-# # constraint check: x(k+1) = g(x(k), u(k))
-# def nextStateConstrs(model: Model, tSet):
-#     # TODO: implementation
-#     #   simple model
-#     #   quality model
-#
-#     # simple model
-#     model.nextStateConstrs0 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t + 1, 0] == model.x[t, 0] + model.x[
-#         t, 3] * pyo.cos(model.x[t, 2]) * dt)
-#     model.nextStateConstrs1 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t + 1, 1] == model.x[t, 1] + model.x[
-#         t, 3] * pyo.sin(model.x[t, 2]) * dt)
-#     model.nextStateConstrs2 = pyo.Constraint(
-#         tSet, rule=lambda model, t: model.x[t + 1, 2] == model.x[t, 2] + model.x[t, 4] * dt)
-#     model.nextStateConstrs3 = pyo.Constraint(
-#         tSet, rule=lambda model, t: model.x[t + 1, 3] == model.x[t, 3] + model.u[t, 0] * dt)
-#     model.nextStateConstrs4 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t + 1, 4] == pyo.atan(
-#         pyo.sin(model.u[t, 1]) * model.x[t, 3] / model.car.wb))
-#
-#
-# # check if car is on track
-# def onTrackConstrs(model: Model, tSet):
-#     # TODO: implementation
-#     #   simple solution: check if the center of vehicle is on the track
-#     #   quality solution: check if the whole car is within the track
-#
-#     # simple solution
-#     # model.onTrackConstr0 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t, 0] ** 2 + model.x[t, 1] ** 2 >= 500**2)
-#     model.onTrackConstr1 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t, 0] ** 2 + model.x[t, 1] ** 2 <= 520**2)
-#     # model.onTrackConstrs0 = pyo.Constraint(tSet, rule=lambda model, t: -520 <= model.x[t, 0])
-#     # model.onTrackConstrs1 = pyo.Constraint(tSet, rule=lambda model, t: -520 <= model.x[t, 1])
-#     # model.onTrackConstrs2 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t, 0] <= 520)
-#     # model.onTrackConstrs3 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t, 1] <= 520)
-#     # model.onTrackConstrs4 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t, 0] <= -500)
-#     # model.onTrackConstrs5 = pyo.Constraint(tSet, rule=lambda model, t: model.x[t, 1] <= -500)
-#     # model.onTrackConstrs6 = pyo.Constraint(tSet, rule=lambda model, t: 500 <= model.x[t, 0])
-#     # model.onTrackConstrs7 = pyo.Constraint(tSet, rule=lambda model, t: 500 <= model.x[t, 1])
-#     pass
-#
-#
-# # check if the car still has traction
-# def tractionConstrs(model: Model, tSet):
-#     # TODO: implementation
-#     #   simple solution: 1G all around(assume car is AWD)
-#     #   quality solutions: check wheel spin(assume car is RWD)
-#     #   additional feature?: add understeer and oversteer
-#
-#     # simple solution
-#     rule = lambda model, t: model.u[t, 0] ** 2 + (model.x[t, 4] * model.x[t, 3]) ** 2 <= 1
-#     model.tractionConstr0 = pyo.Constraint(tSet, rule=rule)
-#     pass
-#
-#
-# # check if the car can repeat the same lap
-# # def sameStarting(model: Model, t: int) -> bool:
-# #     # if the car is on near the starting location
-# #     # but different speed or etc., return false
-# #     # TODO: implementation
-# #     pass
-#
-# def stateBounds(model, tSet):
-#     # model.stateConstr0 = pyo.Constraint(tSet, rule=lambda model, t: (-pi, model.x[t, 2], pi))
-#     model.stateConstr1 = pyo.Constraint(tSet, rule=lambda model, t: (0.1, model.x[t, 3], 100))
-#
-#
-# # check if input is within bounds
-# def inputBounds(model: Model, tSet):
-#     # TODO: implementation
-#     #   simple solution: fixed power(assume CVT)
-#     #   quality solution: realistic powertrain
-#
-#     # simple solution
-#     model.car.accelConstrs(model, tSet, 0, 3)
-#     model.car.steerConstrs(model, tSet, 1)
-#     # model.inputBounds2 = pyo.Constraint(tSet, rule=lambda model, t: (dtBounds[0], model.u[t, 2], dtBounds[1]))
-#
-#
-# def startingCondition(model: Model) -> bool:
-#     model.startConstrs0 = pyo.Constraint(expr=model.x[0, 0] == 0)
-#     model.startConstrs1 = pyo.Constraint(expr=model.x[0, 1] == 510)
-#     model.startConstrs2 = pyo.Constraint(expr=model.x[0, 2] == 0)
-#     model.startConstrs3 = pyo.Constraint(expr=model.x[0, 3] == 10)
-#     model.startConstrs4 = pyo.Constraint(expr=model.x[0, 4] == 0)
-#
-#
-# def endingCondition(model: Model) -> bool:
-#     # model.endingConstrs0 = pyo.Constraint(expr=model.x[model.N, 0] == 100)
-#     # # model.endingConstrs1 = pyo.Constraint(expr=(500, model.x[model.N, 1], 520))
-#     # model.endingConstrs1 = pyo.Constraint(expr=model.x[model.N, 1] == 0)
-#     # model.endingConstrs2 = pyo.Constraint(expr=model.x[model.N, 2] == -1.6)
-#     model.endingConstrs3 = pyo.Constraint(expr=1 <= model.x[model.N, 3])
 
-def
+def vars(model, k):
+    return (model.x[k, 0],
+            model.x[k, 1],
+            model.x[k, 2],
+            model.u[k, 0],
+            model.u[k, 1],
+            model.trackDir[k],
+            model.trackLen[k])
+
+
+def totalTime(model):
+    result = 0
+    for k in model.tmidx:
+        b, v, th, a, psi, tht, lt = vars(model, k)
+        # d = lt / pyo.cos(th) + (lt * pyo.tan(th) + b) * pyo.sin(tht) / pyo.cos(th - tht)
+        d = lt + (lt * th + b) * tht
+        # dt = (pyo.sqrt(2 * a * d + v * v) - v) / a
+        dt = d / v
+        result += dt
+    return result
 
 
 def solve(N: int,
           car: Car,
           track: Track,
-          costFunc: callable) -> (bool, np.ndarray, np.ndarray, float, Model):
+          maxTraction2: float = 1,
+          start: int = 0,
+          x0=None,
+          xinf=None) -> (bool, np.ndarray, np.ndarray, float, Model):
     model = pyo.ConcreteModel()
 
     model.N = N
     model.car = car
     model.track = track
+    model.start = start
 
     model.xidx = pyo.Set(initialize=range(nx))
     model.uidx = pyo.Set(initialize=range(nu))
     model.tidx = pyo.Set(initialize=range(N + 1))
     model.tmidx = pyo.Set(initialize=range(N))
 
-    model.x = pyo.Var(model.tidx, model.xidx, initialize=0.3)
-    model.u = pyo.Var(model.tmidx, model.uidx, initialize=0.2)
+    model.bMax = model.track.fixedWidth
+    model.maxTraction2 = maxTraction2
+    model.trackDir = pyo.Param(model.tmidx, initialize=model.track.segmentCall(2))
+    model.trackLen = pyo.Param(model.tmidx, initialize=model.track.segmentCall(3))
 
-    model.obj = pyo.Objective(rule=costFunc, sense=pyo.maximize)
+    model.x = pyo.Var(model.tidx, model.xidx, initialize=1)
+    model.u = pyo.Var(model.tmidx, model.uidx, initialize=1)
 
-    nextStateConstrs(model, model.tmidx)
-    # model.dtConstr = pyo.Constraint(model.tmidx, rule = lambda model, t: model.x[t, 4] * model.x[t, 3])**2
-    onTrackConstrs(model, model.tidx)
-    tractionConstrs(model, model.tmidx)
-    stateBounds(model, model.tidx)
-    startingCondition(model)
-    endingCondition(model)
-    inputBounds(model, model.tmidx)
+    model.obj = pyo.Objective(rule=totalTime)
 
-    # model.display()
-    # print
+    # state constraint
+    def constrRule0(model, k):
+        b, v, th, a, psi, tht, lt = vars(model, k)
+        return model.x[k + 1, 0] == b + lt * th
+
+    def constrRule1(model, k):
+        b, v, th, a, psi, tht, lt = vars(model, k)
+        dt = (lt + (lt * th + b) * tht) / v
+        return model.x[k + 1, 1] == v + a * dt
+
+    def constrRule2(model, k):
+        b, v, th, a, psi, tht, lt = vars(model, k)
+        dt = (lt + (lt * th + b) * tht) / v
+        omg = v * psi / model.car.wb
+        return model.x[k + 1, 2] == th + omg * dt - tht
+
+    model.constr0 = pyo.Constraint(model.tmidx, rule=constrRule0)
+    model.constr1 = pyo.Constraint(model.tmidx, rule=constrRule1)
+    model.constr2 = pyo.Constraint(model.tmidx, rule=constrRule2)
+
+    # state constraint
+    model.stateConstr00 = pyo.Constraint(model.tmidx, rule=lambda model, k: -model.bMax <= model.x[k, 0])
+    model.stateConstr01 = pyo.Constraint(model.tmidx, rule=lambda model, k: model.x[k, 0] <= model.bMax)
+    model.stateConstr1 = pyo.Constraint(model.tmidx, rule=lambda model, k: vMin <= model.x[k, 1])
+    model.stateConstr20 = pyo.Constraint(model.tmidx, rule=lambda model, k: -thetaMax <= model.x[k, 2])
+    model.stateConstr21 = pyo.Constraint(model.tmidx, rule=lambda model, k: model.x[k, 2] <= thetaMax)
+
+    # traction
+    def tractionRule(model, k):
+        b, v, th, a, psi, tht, lt = vars(model, k)
+        omg = v * psi / model.car.wb
+        return a * a + omg * omg * v * v <= model.maxTraction2
+
+    model.tractionConstr = pyo.Constraint(model.tmidx, rule=tractionRule)
+
+    # input constraints
+    def inputConstrRule0(model, k):
+        b, v, th, a, psi, tht, lt = vars(model, k)
+        P = model.car.P
+        m = model.car.m
+        return a <= P / m / v
+
+    def inputConstrRule1(model, k):
+        b, v, th, a, psi, tht, lt = vars(model, k)
+        psiMax = model.car.stL
+        return (-psiMax, psi, psiMax)
+
+    model.inputConstr0 = pyo.Constraint(model.tmidx, rule=inputConstrRule0)
+    model.inputConstr1 = pyo.Constraint(model.tmidx, rule=inputConstrRule1)
+
+    # initial condition:
+    if x0 is not None:
+        model.initConstr = pyo.Constraint(model.xidx, rule=lambda model, i: model.x[0, i] == x0[i])
+    if xinf is not None:
+        model.initConstr = pyo.Constraint(model.xidx, rule=lambda model, i: model.x[N, i] == xinf[i])
+
+    # end condition:
+
     results = solver.solve(model, tee=True)
 
     feas = results.solver.termination_condition == TerminationCondition.optimal
@@ -177,28 +144,67 @@ def solve(N: int,
     return feas, xOpt, uOpt, JOpt, model
 
 
-N = 50
-car = Car(m=1200, wb=2, P=300000, stL=1)
-track = Track.simpleTrack()
-results = solve(N, car, track, distance)
-print(results[0])
-xOpt = results[1].T
-uOpt = results[2].T
+def getTimeLine(trackData, N, xOpt, uOpt):
+    result = [0]
+    for k in range(N):
+        b, v, th = xOpt[k]
+        a, psi = uOpt[k]
+        tht = trackData[k][2]
+        lt = trackData[k][3]
+        d = lt + (lt * th + b) * tht
+        dt = d / v
+        result.append(result[-1] + dt)
+    return result
 
-timeLine = np.array(range(N + 1)) * dt
-distanceLine = [0]
 
-for i in range(N):
-    distanceLine.append(distanceLine[-1] + xOpt[3][i] * dt)
+if __name__ == "__main__":
+    car = Car(m=1500, wb=2.85, P=300000, stL=0.8)
+    track = Track.trackFromDataFile('lagunaSeca.json')
 
-fig = plt.figure()
-plot1 = fig.add_subplot(221, aspect=1)
-plot2 = fig.add_subplot(222)
-plot3 = fig.add_subplot(223)
-plot4 = fig.add_subplot(224)
-plot1.plot(xOpt[0], xOpt[1])
-plot2.plot(distanceLine[:-1], uOpt[0])
-plot3.plot(distanceLine[:-1], uOpt[1])
-plot4.plot(timeLine, xOpt[2])
+    start = 0
+    N = 0
+    M = track.numOfSegments - N
 
-plt.show()
+    xOpt = [[0, 55, 0]]
+    uOpt = []
+    feas, xOpt, uOpt, JOpt, model = solve(M,
+                                          car,
+                                          track,
+                                          maxTraction2=9.8**2,
+                                          start=start,
+                                          x0=xOpt[-1])
+
+    # for i in range(0,M,10):
+    #     start = i
+    #
+    #     feas, xOpt_, uOpt_, JOpt, model = solve(N,
+    #                                           car,
+    #                                           track,
+    #                                           maxTraction2=9.8**2,
+    #                                           start=start,
+    #                                           x0=xOpt[-1])
+    #     xOpt.extend(xOpt_[1:11])
+    #     uOpt.extend(uOpt_[0:10])
+    #     print(feas)
+    # print(xOpt)
+    # print(uOpt)
+    start = 0
+    xOpt = np.asarray(xOpt)
+    uOpt = np.asarray(uOpt)
+    t = getTimeLine(track.segment(0, M), M, xOpt, uOpt)
+    carPos = np.array([track.pos(start + k, xOpt[k, 0]) for k in range(M + 1)])
+    aLat = uOpt[:, 1] * xOpt[:-1, 1] / car.wb * xOpt[:-1, 1]
+    print(t[-1])
+
+    fig = plt.figure()
+    plot1 = fig.add_subplot(111, aspect=1)
+    # plot2 = fig.add_subplot(222)
+    # plot3 = fig.add_subplot(223)
+    # plot4 = fig.add_subplot(224)
+    plot1.plot(*track.data.T[:2], '-r')
+    plot1.plot(*carPos.T, '.b')
+    # plot2.plot(t, xOpt.T[1])
+    # plot3.plot(t[:-1], aLat ** 2 + uOpt[:, 0] ** 2)
+    # plot4.plot(t[:-1], uOpt.T[1])
+
+    plt.show()

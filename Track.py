@@ -12,22 +12,22 @@ startingDirTestingLen = 0.1
 
 def originalPointsFromPic(imgFile, startingIndex: int = 0, reverse=False) -> np.ndarray:
     img = cv2.imread(imgFile)
-    h, w = img.shape[:2]
-    mask = np.zeros((h, w), np.uint8)
-
-    # Transform to gray colorspace and threshold the image
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # Search for contours and select the biggest one and draw it on mask
-    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-    cnt = max(contours, key=cv2.contourArea)
-    cv2.drawContours(mask, [cnt], 0, 255, -1)
-
-    # Perform a bitwise operation
-    res = cv2.bitwise_and(img, img, mask=mask)
-
-    img = res
+    # h, w = img.shape[:2]
+    # mask = np.zeros((h, w), np.uint8)
+    #
+    # # Transform to gray colorspace and threshold the image
+    # gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    #
+    # # Search for contours and select the biggest one and draw it on mask
+    # contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    # cnt = max(contours, key=cv2.contourArea)
+    # cv2.drawContours(mask, [cnt], 0, 255, -1)
+    #
+    # # Perform a bitwise operation
+    # res = cv2.bitwise_and(img, img, mask=mask)
+    #
+    # img = res
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     ret, threshed = cv2.threshold(gray, 170, 255, cv2.THRESH_BINARY)
 
@@ -86,7 +86,11 @@ def smoothenPoints(points: np.ndarray, smoothness: float, detailFactor: int = 1,
 
 def getDirLen(point1: np.ndarray, point2: np.ndarray) -> (float, float):
     vec = point2 - point1
-    dir = np.arctan(np.inf if vec[0] == 0 else vec[1] / vec[0])
+    dir = np.arctan(np.inf * vec[1] if vec[0] == 0 else vec[1] / vec[0])
+    if vec[0] < 0:
+        dir += np.pi
+        if dir > np.pi:
+            dir -= 2 * np.pi
     length = np.linalg.norm(vec)
     return dir, length
 
@@ -119,10 +123,10 @@ def convertTrack(points: np.ndarray, trackLen: float, width: float, maxDist: flo
             point2 = np.array([splineX(d + tempd), splineY(d + tempd)])
             dir, length = getDirLen(point1, point2)
             bend = dir - dir0
-            if abs(bend) > np.pi / 2:
-                bend = bend - np.pi if bend > 0 else bend + np.pi
+            if abs(bend) > np.pi:
+                bend = bend - 2 * np.pi if bend > 0 else bend + 2 * np.pi
             if abs(bend) < maxBend:
-                data.append([*point1, bend, length])
+                data.append([*point1, bend, length, dir])
                 break
             else:
                 tempd *= maxBend / abs(bend) * splineMaxAngleInterpolationFactor
@@ -133,6 +137,7 @@ def convertTrack(points: np.ndarray, trackLen: float, width: float, maxDist: flo
         dir0 = dir
         point1 = point2
         d += tempd
+    data.append(data[-1])
     if getClipData:
         return np.asarray(data), np.asarray(clippedPoints)
     else:
@@ -144,7 +149,8 @@ def convertTrack(points: np.ndarray, trackLen: float, width: float, maxDist: flo
 class Track:
     def __init__(self, data: np.ndarray, width: float):
         self.data = data
-        self.fixedWidth = width
+        self.fixedWidth = width/2
+        self.numOfSegments = len(self.data) - 1
 
     @classmethod
     def trackFromPicture(cls,
@@ -167,19 +173,42 @@ class Track:
     def length(self) -> float:
         return np.sum(self.data[:, 3])
 
+    def segment(self, start: int, length: int) -> np.ndarray:
+        if start + length > len(self.data):
+            beginningLen = start + length - len(self.data) + 1
+            return np.vstack([self.data[start:-1], self.data[:beginningLen]])
+        else:
+            return self.data[start:start + length]
+
+    def __getitem__(self, key: int):
+        return self.data[key]
+
+    def segmentCall(self, index: int) -> callable:
+        def func(model, k):
+            return model.track[model.start + k][index]
+
+        return func
+
+    def pos(self, index: int, offset: float = 0):
+        if offset == 0:
+            return self[index][:2]
+        x, y, _, _, dir = self[index]
+        return [x - offset * np.sin(dir), y + offset * np.cos(dir)]
+
 
 if __name__ == "__main__":
-    actualLength = 3614  # laguna seca
+    # creating tracks
+    actualLength = 3600  # laguna seca
     actualTrackWidth = 12  # laguna seca, averaged 12m
-    maxBend = 5 / 180 * np.pi
+    maxBend = 10 / 180 * np.pi
 
-    orgPoints = originalPointsFromPic("images.png", 125)
-    # # finding the right starting location
-    # # plt.plot(*orgPoints.T)
-    # # plt.plot(*orgPoints[125], 'or')
-    # # plt.show()
+    orgPoints = originalPointsFromPic("laguna.png", 100)
+    # finding the right starting location
+    # plt.plot(*orgPoints.T)
+    # plt.plot(*orgPoints[100], 'or')
+    # plt.show()
     #
-    smoothedPoints = smoothenPoints(orgPoints, 45, 5)
+    smoothedPoints = smoothenPoints(orgPoints, 45, 5, plotComparison=False)
     # # smoothedPoints = smoothenPoints(smoothedPoints, 60, 1)
     trackData, clippedPoints = convertTrack(smoothedPoints, actualLength, actualTrackWidth, 10, maxBend,
                                             getClipData=True)
