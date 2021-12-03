@@ -195,6 +195,13 @@ class Track:
         x, y, _, _, dir = self[index]
         return [x - offset * np.sin(dir), y + offset * np.cos(dir)]
 
+    def trackAsGraph(self) -> (np.ndarray, np.ndarray):
+        outer = [self.pos(i, -self.fixedWidth) for i in range(self.numOfSegments)]
+        inner = [self.pos(i, self.fixedWidth) for i in range(self.numOfSegments)]
+        return np.asarray(inner), np.asarray(outer)
+
+
+
 
 if __name__ == "__main__":
     # creating tracks

@@ -134,7 +134,7 @@ def solve(N: int,
 
     # end condition:
 
-    results = solver.solve(model, tee=True)
+    results = solver.solve(model, tee=False)
 
     feas = results.solver.termination_condition == TerminationCondition.optimal
     xOpt = np.asarray([[model.x[t, i]() for i in model.xidx] for t in model.tidx])
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     feas, xOpt, uOpt, JOpt, model = solve(M,
                                           car,
                                           track,
-                                          maxTraction2=9.8**2,
+                                          maxTraction2=9.8 ** 2,
                                           start=start,
                                           x0=xOpt[-1])
 
@@ -201,8 +201,11 @@ if __name__ == "__main__":
     # plot2 = fig.add_subplot(222)
     # plot3 = fig.add_subplot(223)
     # plot4 = fig.add_subplot(224)
-    plot1.plot(*track.data.T[:2], '-r')
-    plot1.plot(*carPos.T, '.b')
+    # plot1.plot(*track.data.T[:2], '-r')
+    trackAsGraph = track.trackAsGraph()
+    plot1.plot(*trackAsGraph[0].T, '-r', linewidth=0.3)
+    plot1.plot(*trackAsGraph[1].T, '-r', linewidth=0.3)
+    plot1.plot(*carPos.T, '-b', linewidth=0.6)
     # plot2.plot(t, xOpt.T[1])
     # plot3.plot(t[:-1], aLat ** 2 + uOpt[:, 0] ** 2)
     # plot4.plot(t[:-1], uOpt.T[1])
