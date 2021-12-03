@@ -3,11 +3,14 @@ import pyomo.environ as pyo
 import cv2
 import numpy as np
 from scipy import interpolate
+import json, codecs
 
-splineMaxAngleInterpolationFactor = 0.9
+splineMaxAngleInterpolationFactor = 0.75
+
+startingDirTestingLen = 0.1
 
 
-def originalPointsFromPic(imgFile, startingIndex: int = 0, reverse = False) -> np.ndarray:
+def originalPointsFromPic(imgFile, startingIndex: int = 0, reverse=False) -> np.ndarray:
     img = cv2.imread(imgFile)
     h, w = img.shape[:2]
     mask = np.zeros((h, w), np.uint8)
@@ -46,9 +49,12 @@ def originalPointsFromPic(imgFile, startingIndex: int = 0, reverse = False) -> n
     for i in result:
         i[1] -= 250
         i[1] = - i[1]
-    result = np.append(result, np.array(result[0]).reshape((1, 2)), 0)
     if reverse:
-        pass
+        result = np.flip(result, axis=0)
+    if startingIndex != 0:
+        result = np.concatenate([result[startingIndex:], result[:startingIndex]], axis=0)
+    result = np.append(result, np.array(result[0]).reshape((1, 2)), 0)
+
     return result
 
 
@@ -78,36 +84,60 @@ def smoothenPoints(points: np.ndarray, smoothness: float, detailFactor: int = 1,
     return result
 
 
-def convertTrack(points: np.ndarray, length: float, width: float, maxDist: float, maxBend: float) -> np.ndarray:
+def getDirLen(point1: np.ndarray, point2: np.ndarray) -> (float, float):
+    vec = point2 - point1
+    dir = np.arctan(np.inf if vec[0] == 0 else vec[1] / vec[0])
+    length = np.linalg.norm(vec)
+    return dir, length
+
+
+def convertTrack(points: np.ndarray, trackLen: float, width: float, maxDist: float, maxBend: float,
+                 getClipData=False) -> np.ndarray:
     nPoints = points.shape[0] - 1
-
-    clippingDist = np.tan(maxBend) * width / 2
-
     t = [0]
     for i in range(len(points) - 1):
         t.append(np.linalg.norm(points[i + 1] - points[i]) + t[i])
-    scale = length / t[-1]
-    t *= scale
+    scale = trackLen / t[-1]
+    t = np.asarray(t) * scale
     x, y = (points * scale).T
     splineX = interpolate.UnivariateSpline(t, x)
     splineY = interpolate.UnivariateSpline(t, y)
+
+    clippingDist = np.tan(maxBend) * width / 2
+    clippedPoints = []
+
     data = []
-    d = 0 # distance analyzed
-    while d < length:
-        break
+    d = 0  # distance analyzed
+    dir = 0
 
+    point1 = np.array([splineX(0), splineY(0)])
+    point2 = np.array([splineX(startingDirTestingLen), splineY(startingDirTestingLen)])
+    dir0, _ = getDirLen(point1, point2)
+    while d < trackLen:
+        tempd = maxDist
+        while tempd >= clippingDist:
+            point2 = np.array([splineX(d + tempd), splineY(d + tempd)])
+            dir, length = getDirLen(point1, point2)
+            bend = dir - dir0
+            if abs(bend) > np.pi / 2:
+                bend = bend - np.pi if bend > 0 else bend + np.pi
+            if abs(bend) < maxBend:
+                data.append([*point1, bend, length])
+                break
+            else:
+                tempd *= maxBend / abs(bend) * splineMaxAngleInterpolationFactor
+        if tempd < clippingDist:
+            print("encountered clipping at: ", point1, tempd, bend)
+            clippedPoints.append(point1)
 
+        dir0 = dir
+        point1 = point2
+        d += tempd
+    if getClipData:
+        return np.asarray(data), np.asarray(clippedPoints)
+    else:
+        return np.asarray(data)
 
-    # data & rawData is a list of track sample points
-    # data: [[x, y, direction, length]]
-    # for i in range(nPoints):
-    #     vec = np.array([x[i + 1] - x[i], y[i + 1] - y[i]])
-    #     dir = np.arctan(vec[1] / vec[0] if vec[0] != 0 else np.inf)
-    #     length = np.linalg.norm(vec)
-    #     rawData.append([*scaledPoints[i], dir, length])
-    # rawData = np.asarray(rawData)
-    #
-    # return rawData
     return data
 
 
@@ -129,30 +159,50 @@ class Track:
         return Track(convertTrack(smoothedPoints, length, width, maxDist, maxBend), width)
 
     @classmethod
-    def trackFromDataFile(cls, dataFile: str, width):
-        pass
+    def trackFromDataFile(cls, dataFile: str):
+        dataText = codecs.open(dataFile, 'r', encoding='utf-8').read()
+        data, width = json.loads(dataText)
+        return Track(np.asarray(data), width)
 
     def length(self) -> float:
         return np.sum(self.data[:, 3])
 
 
 if __name__ == "__main__":
-    actualLength = 3602.  # laguna seca
-    actualTrackWidth = 12.  # laguna seca, averaged 12m
+    actualLength = 3614  # laguna seca
+    actualTrackWidth = 12  # laguna seca, averaged 12m
     maxBend = 5 / 180 * np.pi
 
-    orgPoints = originalPointsFromPic("images.png")
-    # finding the right starting location
-    # plt.plot(*orgPoints.T)
-    # plt.plot(*orgPoints[125], 'or')
+    orgPoints = originalPointsFromPic("images.png", 125)
+    # # finding the right starting location
+    # # plt.plot(*orgPoints.T)
+    # # plt.plot(*orgPoints[125], 'or')
+    # # plt.show()
+    #
+    smoothedPoints = smoothenPoints(orgPoints, 45, 5)
+    # # smoothedPoints = smoothenPoints(smoothedPoints, 60, 1)
+    trackData, clippedPoints = convertTrack(smoothedPoints, actualLength, actualTrackWidth, 10, maxBend,
+                                            getClipData=True)
+    # smoothedPoints = smoothenPoints(trackData[:,:2], 45, 1)
+    # trackData, clippedPoints = convertTrack(smoothedPoints, actualLength, actualTrackWidth, 10, maxBend, getClipData=True)
+
+    testTrack = Track(trackData, actualTrackWidth)
+    x, y = trackData.T[0:2]
+    # plt.plot(x, y, '.r')
+    # plt.plot(*clippedPoints.T, 'ob')
     # plt.show()
+    data = trackData.tolist()
+    data = [data, actualTrackWidth]
+    json.dump(data, codecs.open('lagunaSeca.json', 'w', encoding='utf-8'), separators=(',', ':'), sort_keys=True,
+              indent=4)
 
-    smoothedPoints = smoothenPoints(orgPoints, 30, 5, True)
-
-    testTrack = Track(convertTrack(smoothedPoints, actualLength, actualTrackWidth, 10, maxBend), actualTrackWidth)
     # # testTrack = Track.trackFromPicture("images.png", 1, None, 1, maxBend)
     #
     # scale = actualLength / testTrack.length()
     # print("track length with no scaling:", testTrack.length())
     # print("scale factor:", scale)
     # # scaledTrack = Track.trackFromPicture("images.png", scale, actualTrackWidth, 10, maxBend)
+    track = Track.trackFromDataFile('lagunaSeca.json')
+    print(track.length())
+    plt.plot(*track.data.T[:2], '.')
+    plt.show()
