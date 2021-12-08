@@ -170,17 +170,19 @@ class Track:
         data, width = json.loads(dataText)
         return Track(np.asarray(data), width)
 
-    def length(self) -> float:
-        return np.sum(self.data[:, 3])
+    # def length(self) -> float:
+    #     return np.sum(self.data[:, 3])
 
     def segment(self, start: int, length: int) -> np.ndarray:
-        if start + length > len(self.data):
-            beginningLen = start + length - len(self.data) + 1
+        if start + length > self.numOfSegments:
+            beginningLen = start + length - self.numOfSegments + 1
             return np.vstack([self.data[start:-1], self.data[:beginningLen]])
         else:
             return self.data[start:start + length]
 
     def __getitem__(self, key: int):
+        if key >= self.numOfSegments:
+            key %= self.numOfSegments
         return self.data[key]
 
     def segmentCall(self, index: int) -> callable:
@@ -196,10 +198,11 @@ class Track:
         return [x - offset * np.sin(dir), y + offset * np.cos(dir)]
 
     def trackAsGraph(self) -> (np.ndarray, np.ndarray):
-        outer = [self.pos(i, -self.fixedWidth) for i in range(self.numOfSegments)]
-        inner = [self.pos(i, self.fixedWidth) for i in range(self.numOfSegments)]
+        outer = [self.pos(i, -self.fixedWidth) for i in range(self.numOfSegments+1)]
+        inner = [self.pos(i, self.fixedWidth) for i in range(self.numOfSegments+1)]
         return np.asarray(inner), np.asarray(outer)
-
+    def direction(self, index: int) -> float:
+        return self[index][4]
 
 
 
@@ -208,16 +211,17 @@ if __name__ == "__main__":
     actualLength = 3600  # laguna seca
     actualTrackWidth = 12  # laguna seca, averaged 12m
     maxBend = 10 / 180 * np.pi
+    maxDist = 10
 
     orgPoints = originalPointsFromPic("laguna.png", 100)
     # finding the right starting location
     # plt.plot(*orgPoints.T)
     # plt.plot(*orgPoints[100], 'or')
     # plt.show()
-    #
+
     smoothedPoints = smoothenPoints(orgPoints, 45, 5, plotComparison=False)
     # # smoothedPoints = smoothenPoints(smoothedPoints, 60, 1)
-    trackData, clippedPoints = convertTrack(smoothedPoints, actualLength, actualTrackWidth, 10, maxBend,
+    trackData, clippedPoints = convertTrack(smoothedPoints, actualLength, actualTrackWidth, maxDist, maxBend,
                                             getClipData=True)
     # smoothedPoints = smoothenPoints(trackData[:,:2], 45, 1)
     # trackData, clippedPoints = convertTrack(smoothedPoints, actualLength, actualTrackWidth, 10, maxBend, getClipData=True)
