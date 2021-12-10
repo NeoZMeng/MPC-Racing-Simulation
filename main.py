@@ -21,6 +21,9 @@ if __name__ == "__main__":
     problem.initSpeed = 55
     problem.refreshModel()
 
+    # enable the line below to disable soft constraints
+    # problem.slack = False
+
 
 
     # sys inputs:
@@ -40,7 +43,7 @@ if __name__ == "__main__":
 
     else:
         N = int(sys.argv[1])
-        M = track.numOfSegments
+        M = track.numOfSegments + 1
         start = 0
         jump = 1
         if len(sys.argv) > 3:

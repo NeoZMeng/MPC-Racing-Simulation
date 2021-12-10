@@ -21,6 +21,10 @@ nx = 3
 nu = 2
 vMin = 5
 thetaMax = 0.5
+trackSafeBound = 0.95
+slackPenalty = 1000000
+xinit = [0, 30, 0]
+uinit = [0.1, -0.2]
 
 
 # helper function to simplify constraint coding
@@ -43,7 +47,7 @@ def lapTimeFormat(time: float) -> str:
 
 
 class RaceProblem:
-    def __init__(self, car: Car, track: Track):
+    def __init__(self, car: Car, track: Track, slack=True):
         self.car = car
         self.track = track
         self.model = None
@@ -54,7 +58,10 @@ class RaceProblem:
         self.initSpeed = vMin + 1
         self.startOffset = -track.fixedWidth * 0.8
         self.x0 = [self.startOffset, self.initSpeed, 0]
-        self.xinf = [None, None, 0]
+        self.xinf = [0.1, None, -0.01]
+        self.xinit = lambda model, k, i: xinit[i]
+        self.uinit = lambda model, k, i: uinit[i]
+        self.slack = slack
 
     def refreshModel(self):
         self.model = None
@@ -63,16 +70,6 @@ class RaceProblem:
         self.JOpt = None
         self.x0 = [self.startOffset, self.initSpeed, 0]
         self.xinf = [None, None, 0]
-
-    def totalTime(self, model):
-        result = 0
-        for k in model.tmidx:
-            b, v, th, a, psi, tht, lt = vars(model, k)
-            d = lt + (lt * th + b) * tht
-            sq_ = v * v + 2 * a * d
-            dt = (pyo.sqrt(sq_) - v) / a
-            result += dt
-        return result
 
     def solve(self,
               N: int,
@@ -99,10 +96,25 @@ class RaceProblem:
         model.trackDir = pyo.Param(model.tmidx, initialize=model.track.segmentCall(2))
         model.trackLen = pyo.Param(model.tmidx, initialize=model.track.segmentCall(3))
 
-        model.x = pyo.Var(model.tidx, model.xidx, initialize=lambda model, k, i: [0, 30, 0][i])
-        model.u = pyo.Var(model.tmidx, model.uidx, initialize=0.01)
+        model.x = pyo.Var(model.tidx, model.xidx, initialize=self.xinit)
+        model.u = pyo.Var(model.tmidx, model.uidx, initialize=self.uinit)
 
-        model.obj = pyo.Objective(rule=self.totalTime)
+        if self.slack:
+            model.s = pyo.Var(model.tidx, initialize=0)
+
+        def totalTime(model):
+            result = 0
+            for k in model.tmidx:
+                b, v, th, a, psi, tht, lt = vars(model, k)
+                d = lt + (lt * th + b) * tht
+                sq_ = v * v + 2 * a * d
+                dt = (pyo.sqrt(sq_) - v) / a
+                result += dt
+                if self.slack:
+                    result += slackPenalty / model.bMax * model.s[k] ** 2
+            return result
+
+        model.obj = pyo.Objective(rule=totalTime)
 
         # special constraint
         def specialConstr0(model, k):
@@ -113,7 +125,7 @@ class RaceProblem:
 
         model.specialConstr0 = pyo.Constraint(model.tmidx, rule=specialConstr0)
 
-        # state constraint
+        # state equality constraint
         def constrRule0(model, k):
             b, v, th, a, psi, tht, lt = vars(model, k)
             return model.x[k + 1, 0] == b + lt * th
@@ -137,12 +149,22 @@ class RaceProblem:
         model.constr1 = pyo.Constraint(model.tmidx, rule=constrRule1)
         model.constr2 = pyo.Constraint(model.tmidx, rule=constrRule2)
 
-        # state constraint
-        model.stateConstr00 = pyo.Constraint(model.tmidx, rule=lambda model, k: -model.bMax <= model.x[k, 0])
-        model.stateConstr01 = pyo.Constraint(model.tmidx, rule=lambda model, k: model.x[k, 0] <= model.bMax)
-        model.stateConstr1 = pyo.Constraint(model.tmidx, rule=lambda model, k: vMin <= model.x[k, 1])
-        model.stateConstr20 = pyo.Constraint(model.tmidx, rule=lambda model, k: -thetaMax <= model.x[k, 2])
-        model.stateConstr21 = pyo.Constraint(model.tmidx, rule=lambda model, k: model.x[k, 2] <= thetaMax)
+        # state inequality constraint
+        if self.slack:
+            model.slackConstr0 = pyo.Constraint(model.tidx, rule= \
+                # lambda model, k: (0, model.s[k], (1 - trackSafeBound) * model.bMax))
+                lambda model, k: 0 <= model.s[k])
+
+            model.stateConstr02 = pyo.Constraint(model.tidx, rule= \
+                lambda model, k: -model.x[k, 0] <= model.bMax * trackSafeBound + model.s[k])
+            model.stateConstr03 = pyo.Constraint(model.tidx, rule= \
+                lambda model, k: model.x[k, 0] <= model.bMax * trackSafeBound + model.s[k])
+        else:
+            model.stateConstr00 = pyo.Constraint(model.tidx, rule=lambda model, k: -model.x[k, 0] <= model.bMax)
+            model.stateConstr01 = pyo.Constraint(model.tidx, rule=lambda model, k: model.x[k, 0] <= model.bMax)
+        model.stateConstr1 = pyo.Constraint(model.tidx, rule=lambda model, k: vMin <= model.x[k, 1])
+        model.stateConstr20 = pyo.Constraint(model.tidx, rule=lambda model, k: -model.x[k, 2] <= thetaMax)
+        model.stateConstr21 = pyo.Constraint(model.tidx, rule=lambda model, k: model.x[k, 2] <= thetaMax)
 
         # traction
         def tractionRule(model, k):
@@ -202,14 +224,25 @@ class RaceProblem:
             tht = trackData[k][2]
             lt = trackData[k][3]
             d = lt + (lt * th + b) * tht
-            dt = d / v
+            sq_ = v * v + 2 * a * d
+            dt = (pyo.sqrt(sq_) - v) / a
             result.append(result[-1] + dt)
         return result
 
     def getLapTime(self, start=0) -> float:
-        if self.JOpt is None:
-            self.JOpt = self.getTimeLine(start=start)[-1]
-        return self.JOpt
+        N = self.uOpt.shape[0]
+        trackData = self.track.segment(start, N + start)
+        result = 0
+        for k in range(N):
+            b, v, th = self.xOpt[k]
+            a, psi = self.uOpt[k]
+            tht = trackData[k][2]
+            lt = trackData[k][3]
+            d = lt + (lt * th + b) * tht
+            sq_ = v * v + 2 * a * d
+            dt = (pyo.sqrt(sq_) - v) / a
+            result += dt
+        return result
 
     def solveAtOnce(self, N: int = None, start: int = 0, fastestLap=False, tee=False):
         if N is None:
@@ -221,6 +254,7 @@ class RaceProblem:
                                                            xinf=self.xinf,
                                                            fastestLap=fastestLap,
                                                            tee=tee)
+        print(self.JOpt - self.getLapTime(start))
         return feas
 
     def solveMPC(self, N: int, M: int, start: int = 0, releaseErr=False):
