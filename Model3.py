@@ -21,8 +21,8 @@ nx = 3
 nu = 2
 vMin = 5
 thetaMax = 0.5
-trackSafeBound = 0.90
-slackPenalty = 1000000
+trackSafeBound = 0.9
+slackPenalty = 1000
 xinit = [0, 30, 0]
 uinit = [0.1, -0.2]
 
@@ -36,6 +36,13 @@ def vars(model, k):
             model.u[k, 1],
             model.trackDir[k],
             model.trackLen[k])
+
+
+def get_dt(model, k):
+    b, v, th, a, psi, tht, lt = vars(model, k)
+    d = lt / pyo.cos(th) + (lt * pyo.tan(th) + b) * pyo.sin(tht) / pyo.cos(th - tht)
+    sq_ = v * v + 2 * a * d
+    return (pyo.sqrt(sq_) - v) / a
 
 
 def lapTimeFormat(time: float) -> str:
@@ -102,24 +109,21 @@ class RaceProblem:
         if self.slack:
             model.s = pyo.Var(model.tidx, initialize=0)
 
-        def totalTime(model):
+        def cost(model):
             result = 0
             for k in model.tmidx:
-                b, v, th, a, psi, tht, lt = vars(model, k)
-                d = lt + (lt * th + b) * tht
-                sq_ = v * v + 2 * a * d
-                dt = (pyo.sqrt(sq_) - v) / a
+                dt = get_dt(model, k)
                 result += dt
                 if self.slack:
                     result += slackPenalty / model.bMax * model.s[k] ** 2
             return result
 
-        model.obj = pyo.Objective(rule=totalTime)
+        model.obj = pyo.Objective(rule=cost)
 
         # special constraint
         def specialConstr0(model, k):
             b, v, th, a, psi, tht, lt = vars(model, k)
-            d = lt + (lt * th + b) * tht
+            d = lt / pyo.cos(th) + (lt * pyo.tan(th) + b) * pyo.sin(tht) / pyo.cos(th - tht)
             sq_ = v * v + 2 * a * d
             return sq_ >= vMin
 
@@ -128,21 +132,18 @@ class RaceProblem:
         # state equality constraint
         def constrRule0(model, k):
             b, v, th, a, psi, tht, lt = vars(model, k)
-            return model.x[k + 1, 0] == b + lt * th
+            bk1 = (lt * pyo.tan(th) + b) * (pyo.cos(tht) + pyo.sin(tht) * pyo.tan(th - tht))
+            return model.x[k + 1, 0] == bk1
 
         def constrRule1(model, k):
             b, v, th, a, psi, tht, lt = vars(model, k)
-            d = lt + (lt * th + b) * tht
-            sq_ = v * v + 2 * a * d
-            dt = (pyo.sqrt(sq_) - v) / a
+            dt = get_dt(model, k)
             return model.x[k + 1, 1] == v + a * dt
 
         def constrRule2(model, k):
             b, v, th, a, psi, tht, lt = vars(model, k)
-            d = lt + (lt * th + b) * tht
-            sq_ = v * v + 2 * a * d
-            dt = (pyo.sqrt(sq_) - v) / a
-            omg = v * psi / model.car.wb
+            dt = get_dt(model, k)
+            omg = v * pyo.sin(psi) / model.car.wb
             return model.x[k + 1, 2] == th + omg * dt - tht
 
         model.constr0 = pyo.Constraint(model.tmidx, rule=constrRule0)
@@ -152,8 +153,8 @@ class RaceProblem:
         # state inequality constraint
         if self.slack:
             model.slackConstr0 = pyo.Constraint(model.tidx, rule= \
-                # lambda model, k: (0, model.s[k], (1 - trackSafeBound) * model.bMax))
-                lambda model, k: 0 <= model.s[k])
+                lambda model, k: (0, model.s[k], (1 - trackSafeBound) * model.bMax))
+            # lambda model, k: 0 <= model.s[k])
 
             model.stateConstr02 = pyo.Constraint(model.tidx, rule= \
                 lambda model, k: -model.x[k, 0] <= model.bMax * trackSafeBound + model.s[k])
@@ -162,14 +163,15 @@ class RaceProblem:
         else:
             model.stateConstr00 = pyo.Constraint(model.tidx, rule=lambda model, k: -model.x[k, 0] <= model.bMax)
             model.stateConstr01 = pyo.Constraint(model.tidx, rule=lambda model, k: model.x[k, 0] <= model.bMax)
-        model.stateConstr1 = pyo.Constraint(model.tidx, rule=lambda model, k: vMin <= model.x[k, 1])
-        model.stateConstr20 = pyo.Constraint(model.tidx, rule=lambda model, k: -model.x[k, 2] <= thetaMax)
-        model.stateConstr21 = pyo.Constraint(model.tidx, rule=lambda model, k: model.x[k, 2] <= thetaMax)
+            model.stateConstr1 = pyo.Constraint(model.tidx, rule=lambda model, k: vMin <= model.x[k, 1])
+            model.stateConstr20 = pyo.Constraint(model.tidx, rule=lambda model, k: -model.x[k, 2] <= thetaMax)
+            model.stateConstr21 = pyo.Constraint(model.tidx, rule=lambda model, k: model.x[k, 2] <= thetaMax)
 
-        # traction
+            # traction
+
         def tractionRule(model, k):
             b, v, th, a, psi, tht, lt = vars(model, k)
-            omg = v * psi / model.car.wb
+            omg = v * pyo.sin(psi) / model.car.wb
             return a * a + omg * omg * v * v <= (model.tireTraction * g) ** 2
 
         model.tractionConstr = pyo.Constraint(model.tmidx, rule=tractionRule)
@@ -254,7 +256,7 @@ class RaceProblem:
                                                            xinf=self.xinf,
                                                            fastestLap=fastestLap,
                                                            tee=tee)
-        print(self.JOpt - self.getLapTime(start))
+        print('soft constraint violation:', (self.JOpt - self.getLapTime(start)) / slackPenalty)
         return feas
 
     def solveMPC(self, N: int, M: int, start: int = 0, releaseErr=False):

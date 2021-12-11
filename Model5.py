@@ -7,9 +7,10 @@ from matplotlib.animation import FuncAnimation
 
 from Car import Car
 from Track import Track
+from Simulator import Simulator
 
 solver = pyo.SolverFactory('ipopt')
-solver.options['halt_on_ampl_error'] = 'yes'
+solver.options['halt_on_ampl_error'] = 'no'
 solver.options['print_level'] = 5
 
 # x contains: position_x, position_y, heading, speed, turning_rate
@@ -21,21 +22,10 @@ nx = 3
 nu = 2
 vMin = 5
 thetaMax = 0.5
-trackSafeBound = 0.90
-slackPenalty = 1000000
-xinit = [0, 30, 0]
-uinit = [0.1, -0.2]
-
-
-# helper function to simplify constraint coding
-def vars(model, k):
-    return (model.x[k, 0],
-            model.x[k, 1],
-            model.x[k, 2],
-            model.u[k, 0],
-            model.u[k, 1],
-            model.trackDir[k],
-            model.trackLen[k])
+trackSafeBound = 0.8
+slackPenalty = 10000
+xinit = [1, 30, 0]
+uinit = [0.1, 0.2]
 
 
 def lapTimeFormat(time: float) -> str:
@@ -62,6 +52,7 @@ class RaceProblem:
         self.xinit = lambda model, k, i: xinit[i]
         self.uinit = lambda model, k, i: uinit[i]
         self.slack = slack
+        self.x0xOff = None
 
     def refreshModel(self):
         self.model = None
@@ -69,7 +60,31 @@ class RaceProblem:
         self.uOpt = None
         self.JOpt = None
         self.x0 = [self.startOffset, self.initSpeed, 0]
-        self.xinf = [None, None, 0]
+        self.xinf = [-0.1, None, -0.001]
+
+    # helper function to simplify constraint coding
+    def vars(self, model, k):
+        if self.x0xOff is not None and k == 0:
+            return (model.x[k, 0],
+                    model.x[k, 1],
+                    model.x[k, 2],
+                    model.u[k, 0],
+                    model.u[k, 1],
+                    model.trackDir[k],
+                    model.trackLen[k] - self.x0xOff)
+        return (model.x[k, 0],
+                model.x[k, 1],
+                model.x[k, 2],
+                model.u[k, 0],
+                model.u[k, 1],
+                model.trackDir[k],
+                model.trackLen[k])
+
+    def _get_dt(self, model, k):
+        b, v, th, a, psi, tht, lt = self.vars(model, k)
+        d = lt / pyo.cos(th) + (lt * pyo.tan(th) + b) * pyo.sin(tht) / pyo.cos(th - tht)
+        sq_ = v * v + 2 * a * d
+        return (pyo.sqrt(sq_) - v) / a
 
     def solve(self,
               N: int,
@@ -102,24 +117,21 @@ class RaceProblem:
         if self.slack:
             model.s = pyo.Var(model.tidx, initialize=0)
 
-        def totalTime(model):
+        def cost(model):
             result = 0
             for k in model.tmidx:
-                b, v, th, a, psi, tht, lt = vars(model, k)
-                d = lt + (lt * th + b) * tht
-                sq_ = v * v + 2 * a * d
-                dt = (pyo.sqrt(sq_) - v) / a
+                dt = self._get_dt(model, k)
                 result += dt
                 if self.slack:
                     result += slackPenalty / model.bMax * model.s[k] ** 2
             return result
 
-        model.obj = pyo.Objective(rule=totalTime)
+        model.obj = pyo.Objective(rule=cost)
 
         # special constraint
         def specialConstr0(model, k):
-            b, v, th, a, psi, tht, lt = vars(model, k)
-            d = lt + (lt * th + b) * tht
+            b, v, th, a, psi, tht, lt = self.vars(model, k)
+            d = lt / pyo.cos(th) + (lt * pyo.tan(th) + b) * pyo.sin(tht) / pyo.cos(th - tht)
             sq_ = v * v + 2 * a * d
             return sq_ >= vMin
 
@@ -127,23 +139,20 @@ class RaceProblem:
 
         # state equality constraint
         def constrRule0(model, k):
-            b, v, th, a, psi, tht, lt = vars(model, k)
-            return model.x[k + 1, 0] == b + lt * th
+            b, v, th, a, psi, tht, lt = self.vars(model, k)
+            bk1 = (lt * pyo.tan(th) + b) * (pyo.cos(tht) + pyo.sin(tht) * pyo.tan(th - tht))
+            return model.x[k + 1, 0] == bk1
 
         def constrRule1(model, k):
-            b, v, th, a, psi, tht, lt = vars(model, k)
-            d = lt + (lt * th + b) * tht
-            sq_ = v * v + 2 * a * d
-            dt = (pyo.sqrt(sq_) - v) / a
+            b, v, th, a, psi, tht, lt = self.vars(model, k)
+            dt = self._get_dt(model, k)
             return model.x[k + 1, 1] == v + a * dt
 
         def constrRule2(model, k):
-            b, v, th, a, psi, tht, lt = vars(model, k)
-            d = lt + (lt * th + b) * tht
-            sq_ = v * v + 2 * a * d
-            dt = (pyo.sqrt(sq_) - v) / a
-            omg = v * psi / model.car.wb
-            return model.x[k + 1, 2] == th + omg * dt - tht
+            b, v, th, a, psi, tht, lt = self.vars(model, k)
+            d = lt / pyo.cos(th) + (lt * pyo.tan(th) + b) * pyo.sin(tht) / pyo.cos(th - tht)
+            r = self.car.wb / pyo.tan(psi)
+            return model.x[k + 1, 2] == th + d / r - tht
 
         model.constr0 = pyo.Constraint(model.tmidx, rule=constrRule0)
         model.constr1 = pyo.Constraint(model.tmidx, rule=constrRule1)
@@ -151,9 +160,8 @@ class RaceProblem:
 
         # state inequality constraint
         if self.slack:
-            model.slackConstr0 = pyo.Constraint(model.tidx, rule= \
-                # lambda model, k: (0, model.s[k], (1 - trackSafeBound) * model.bMax))
-                lambda model, k: 0 <= model.s[k])
+            model.slackConstr0 = pyo.Constraint(model.tidx, rule=lambda model, k: 0 <= model.s[k])
+            # lambda model, k: (0, model.s[k], (1 - trackSafeBound) * model.bMax))
 
             model.stateConstr02 = pyo.Constraint(model.tidx, rule= \
                 lambda model, k: -model.x[k, 0] <= model.bMax * trackSafeBound + model.s[k])
@@ -162,27 +170,28 @@ class RaceProblem:
         else:
             model.stateConstr00 = pyo.Constraint(model.tidx, rule=lambda model, k: -model.x[k, 0] <= model.bMax)
             model.stateConstr01 = pyo.Constraint(model.tidx, rule=lambda model, k: model.x[k, 0] <= model.bMax)
-        model.stateConstr1 = pyo.Constraint(model.tidx, rule=lambda model, k: vMin <= model.x[k, 1])
-        model.stateConstr20 = pyo.Constraint(model.tidx, rule=lambda model, k: -model.x[k, 2] <= thetaMax)
-        model.stateConstr21 = pyo.Constraint(model.tidx, rule=lambda model, k: model.x[k, 2] <= thetaMax)
+            model.stateConstr1 = pyo.Constraint(model.tidx, rule=lambda model, k: vMin <= model.x[k, 1])
+            model.stateConstr20 = pyo.Constraint(model.tidx, rule=lambda model, k: -model.x[k, 2] <= thetaMax)
+            model.stateConstr21 = pyo.Constraint(model.tidx, rule=lambda model, k: model.x[k, 2] <= thetaMax)
 
-        # traction
+            # traction
+
         def tractionRule(model, k):
-            b, v, th, a, psi, tht, lt = vars(model, k)
-            omg = v * psi / model.car.wb
+            b, v, th, a, psi, tht, lt = self.vars(model, k)
+            omg = v * pyo.sin(psi) / model.car.wb
             return a * a + omg * omg * v * v <= (model.tireTraction * g) ** 2
 
         model.tractionConstr = pyo.Constraint(model.tmidx, rule=tractionRule)
 
         # input constraints
         def inputConstrRule0(model, k):
-            b, v, th, a, psi, tht, lt = vars(model, k)
+            b, v, th, a, psi, tht, lt = self.vars(model, k)
             P = model.car.P
             m = model.car.m
             return a <= P / m / v
 
         def inputConstrRule1(model, k):
-            b, v, th, a, psi, tht, lt = vars(model, k)
+            b, v, th, a, psi, tht, lt = self.vars(model, k)
             psiMax = model.car.stL
             return (-psiMax, psi, psiMax)
 
@@ -214,7 +223,16 @@ class RaceProblem:
 
         return feas, xOpt, uOpt, JOpt
 
-    def getTimeLine(self, start: int = 0) -> [float]:
+    def get_dt(self, b, v, th, a, psi, k, xOff = None):
+        tht = self.track.data[k][2]
+        lt = self.track.data[k][3]
+        if xOff is not None:
+            lt -= xOff
+        d = lt / np.cos(th) + (lt * np.tan(th) + b) * np.sin(tht) / np.cos(th - tht)
+        sq_ = v * v + 2 * a * d
+        return (np.sqrt(sq_) - v) / a
+
+    def getTimeLine(self, start: int = 0, get_dt=False) -> [float]:
         N = self.uOpt.shape[0]
         trackData = self.track.segment(start, N + start)
         result = [0]
@@ -223,11 +241,11 @@ class RaceProblem:
             a, psi = self.uOpt[k]
             tht = trackData[k][2]
             lt = trackData[k][3]
-            d = lt + (lt * th + b) * tht
+            d = lt / np.cos(th) + (lt * np.tan(th) + b) * np.sin(tht) / np.cos(th - tht)
             sq_ = v * v + 2 * a * d
-            dt = (pyo.sqrt(sq_) - v) / a
-            result.append(result[-1] + dt)
-        return result
+            dt = (np.sqrt(sq_) - v) / a
+            result.append(dt if get_dt else result[-1] + dt)
+        return np.asarray(result)
 
     def getLapTime(self, start=0) -> float:
         N = self.uOpt.shape[0]
@@ -238,9 +256,9 @@ class RaceProblem:
             a, psi = self.uOpt[k]
             tht = trackData[k][2]
             lt = trackData[k][3]
-            d = lt + (lt * th + b) * tht
+            d = lt / np.cos(th) + (lt * np.tan(th) + b) * np.sin(tht) / np.cos(th - tht)
             sq_ = v * v + 2 * a * d
-            dt = (pyo.sqrt(sq_) - v) / a
+            dt = (np.sqrt(sq_) - v) / a
             result += dt
         return result
 
@@ -254,11 +272,11 @@ class RaceProblem:
                                                            xinf=self.xinf,
                                                            fastestLap=fastestLap,
                                                            tee=tee)
-        print(self.JOpt - self.getLapTime(start))
+        print('soft constraint violation:', (self.JOpt - self.getLapTime(start)) / slackPenalty)
         return feas
 
-    def solveMPC(self, N: int, M: int, start: int = 0, releaseErr=False):
-        xOpt = []
+    def solveMPC(self, N: int, M: int, start: int = 0, feedback=False, releaseErr=False):
+        xOpt = [self.x0]
         uOpt = []
         xOpt_ = []
         uOpt_ = []
@@ -267,6 +285,11 @@ class RaceProblem:
         nextxinf = self.xinf
         lastxOpt = None
         lastuOpt = None
+        simulator = None
+        if feedback:
+            simulator = Simulator(self.car, self.track)
+            x, y, v, th = *self.track.pos(0, self.x0[0]), self.x0[1], self.track.direction(0, self.x0[2])
+            simulator.init(x, y, v, th)
         for i in range(start, start + M):
             stepStart = i
             try:
@@ -294,7 +317,20 @@ class RaceProblem:
             feas.append(feas_)
             lastxOpt = xOpt_ if feas_ else lastxOpt[1:]
             lastuOpt = uOpt_ if feas_ else lastuOpt[1:]
-            nextx0 = lastxOpt[1, :]
+            if feedback:
+                dt = self.get_dt(*nextx0, *lastuOpt[0], i, self.x0xOff) if feas \
+                    else self.self.get_dt(*lastxOpt[0], *lastuOpt[0], i)
+                x, y, v, th = simulator.run(*lastuOpt[0], dt)
+                self.x0xOff, b = self.track.posOffset(i + 1, [x, y])
+                nextx0 = [b, v, th - self.track.direction(i)]
+
+                # testing
+                print(self.x0xOff)
+                pos__ = self.track.pos(i + 1, lastxOpt[1][0])
+                plt.plot(*pos__, '.b')
+                plt.plot(x, y, '.g')
+            else:
+                nextx0 = lastxOpt[1, :]
             xOpt.append(lastxOpt[1])
             uOpt.append(lastuOpt[0])
         self.xOpt = np.asarray(xOpt)
@@ -305,18 +341,17 @@ class RaceProblem:
         t = self.getLapTime()
         print("lap time: ", lapTimeFormat(t))
 
-    def plotTrace(self, start: int = 0):
+    def plotTrace(self, plotObj=None, start: int = 0):
+        plot = plotObj
         N = self.uOpt.shape[0]
         carPos = np.array([self.track.pos(start + k, self.xOpt[k, 0]) for k in range(N)])
-
-        fig = plt.figure()
-        plot = fig.add_subplot(aspect=1, xlim=(0, 1000), ylim=(0, 1000))
-        trackAsGraph = self.track.trackAsGraph()
-        plot.plot(*trackAsGraph[0].T, '-r', linewidth=0.3)
-        plot.plot(*trackAsGraph[1].T, '-r', linewidth=0.3)
+        if plotObj is None:
+            fig = plt.figure()
+            plot = fig.add_subplot(aspect=1, xlim=(0, 1000), ylim=(0, 1000))
+            self.track.plotTrack(plotObj=plot)
         plot.plot(*carPos.T, '-b', linewidth=0.6)
-
-        plt.show()
+        if plotObj is None:
+            plt.show()
 
     def generateAnim(self, start: int = 0):
         t = self.getTimeLine()

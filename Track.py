@@ -10,6 +10,8 @@ splineMaxAngleInterpolationFactor = 0.75
 startingDirTestingLen = 0.1
 
 
+# Track.data structure: [[x, y, bend, length, direction]]
+
 def originalPointsFromPic(imgFile, startingIndex: int = 0, reverse=False) -> np.ndarray:
     img = cv2.imread(imgFile)
     # h, w = img.shape[:2]
@@ -149,7 +151,7 @@ def convertTrack(points: np.ndarray, trackLen: float, width: float, maxDist: flo
 class Track:
     def __init__(self, data: np.ndarray, width: float):
         self.data = data
-        self.fixedWidth = width/2
+        self.fixedWidth = width / 2
         self.numOfSegments = len(self.data) - 1
 
     @classmethod
@@ -191,19 +193,44 @@ class Track:
 
         return func
 
-    def pos(self, index: int, offset: float = 0):
+    def pos(self, index: int, offset: float = 0, xOff: float = 0):
         if offset == 0:
             return self[index][:2]
         x, y, _, _, dir = self[index]
-        return [x - offset * np.sin(dir), y + offset * np.cos(dir)]
+        return [x + xOff * np.cos(dir) - offset * np.sin(dir), y + xOff * np.sin(dir) + offset * np.cos(dir)]
+
+    def posOffset(self, index: int, pos):
+        x, y, _, _, dir = self[index]
+        xp = pos[0] - x
+        yp = pos[1] - y
+        thpp = np.arctan(yp / xp)
+        if xp < 0:
+            thpp += np.pi
+        if thpp > np.pi:
+            thpp -= 2 * np.pi
+        thp = thpp - dir
+        d = np.linalg.norm(np.array([xp,yp]))
+        return [d * np.cos(thp), d * np.sin(thp)]
+
+    def direction(self, index: int, offset: float = 0) -> float:
+        dir = self[index][4]
+        return dir + offset
 
     def trackAsGraph(self) -> (np.ndarray, np.ndarray):
-        outer = [self.pos(i, -self.fixedWidth) for i in range(self.numOfSegments+1)]
-        inner = [self.pos(i, self.fixedWidth) for i in range(self.numOfSegments+1)]
+        outer = [self.pos(i, -self.fixedWidth) for i in range(self.numOfSegments + 1)]
+        inner = [self.pos(i, self.fixedWidth) for i in range(self.numOfSegments + 1)]
         return np.asarray(inner), np.asarray(outer)
-    def direction(self, index: int) -> float:
-        return self[index][4]
 
+    def plotTrack(self, plotObj=None):
+        plot = plotObj
+        if plotObj is None:
+            fig = plt.figure()
+            plot = fig.add_subplot(aspect=1, xlim=(0, 1000), ylim=(0, 1000))
+        trackAsGraph = self.trackAsGraph()
+        plot.plot(*trackAsGraph[0].T, '-r', linewidth=0.3)
+        plot.plot(*trackAsGraph[1].T, '-r', linewidth=0.3)
+        if plotObj is None:
+            plt.show()
 
 
 if __name__ == "__main__":

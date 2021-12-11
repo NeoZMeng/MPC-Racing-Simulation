@@ -56,9 +56,9 @@ class RaceProblem:
     def totalTime(self, model):
         result = 0
         for k in model.tmidx:
-            b, v, th, a, psi, tht, lt = vars(model, k)
-            # d = lt / pyo.cos(th) + (lt * pyo.tan(th) + b) * pyo.sin(tht) / pyo.cos(th - tht)
-            d = lt + (lt * th + b) * tht
+            b, v, thh, a, psi, thht, lt = vars(model, k)
+            # d = lt / pyo.cos(thh) + (lt * pyo.tan(thh) + b) * pyo.sin(thht) / pyo.cos(thh - thht)
+            d = lt + (lt * thh + b) * thht
             # dt = (pyo.sqrt(2 * a * d + v * v) - v) / a
             dt = d / v
             result += dt
@@ -83,7 +83,7 @@ class RaceProblem:
         model.tidx = pyo.Set(initialize=range(N + 1))
         model.tmidx = pyo.Set(initialize=range(N))
 
-        model.bMax = model.track.fixedWidth
+        model.bMax = model.track.fixedWidthh
         model.tireTraction = self.tireTraction
         model.trackDir = pyo.Param(model.tmidx, initialize=model.track.segmentCall(2))
         model.trackLen = pyo.Param(model.tmidx, initialize=model.track.segmentCall(3))
