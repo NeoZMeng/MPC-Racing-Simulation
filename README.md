@@ -1,1 +1,2 @@
-# M231FinalProject
+# MPC Racing Simulation
+
